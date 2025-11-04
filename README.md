@@ -72,12 +72,24 @@ $ podpower
 {
   "type": "in_ear",
   "model": "AirPods Pro",
-  "left": 85,
-  "right": 90,
-  "case": 45,
-  "charging_left": false,
-  "charging_right": false,
-  "charging_case": false
+  "battery": 85,
+  "components": [
+    {
+      "name": "left",
+      "battery": 85,
+      "charging": false
+    },
+    {
+      "name": "right",
+      "battery": 90,
+      "charging": false
+    },
+    {
+      "name": "case",
+      "battery": 45,
+      "charging": false
+    }
+  ]
 }
 
 # JSON output for AirPods Max (over-ear headphones)
@@ -86,16 +98,30 @@ $ podpower
   "type": "over_ear",
   "model": "AirPods Max",
   "battery": 95,
-  "charging": false
+  "components": [
+    {
+      "name": "headphones",
+      "battery": 95,
+      "charging": false
+    }
+  ]
 }
 
-# Pipe through jq for formatted output
-$ podpower | jq -r '"\(.model): L=\(.left)% R=\(.right)% Case=\(.case)%"'
-AirPods Pro: L=85% R=90% Case=45%
-
-# Extract specific fields
-$ podpower | jq '.left'
+# Get the main battery level (works for all AirPods types)
+$ podpower | jq '.battery'
 85
+
+# Pipe through jq for formatted output
+$ podpower | jq -r '"\(.model): \(.battery)%"'
+AirPods Pro: 85%
+
+# Get individual component battery levels
+$ podpower | jq '.components[] | select(.name=="left") | .battery'
+85
+
+# Custom format for in-ear with all components
+$ podpower | jq -r '"\(.model): L=\(.components[] | select(.name=="left") | .battery)% R=\(.components[] | select(.name=="right") | .battery)% Case=\(.components[] | select(.name=="case") | .battery)%"'
+AirPods Pro: L=85% R=90% Case=45%
 ```
 
 ## Exit Codes
@@ -109,21 +135,44 @@ $ podpower | jq '.left'
 
 ```json
 "custom/airpods": {
-    "exec": "podpower 2>/dev/null | jq -r '.left // empty'",
+    "exec": "podpower 2>/dev/null | jq -r '.battery // empty'",
     "interval": 30,
     "format": " {}%"
 }
 ```
 
+Or with different icons based on type:
+
+```json
+"custom/airpods": {
+    "exec": "podpower 2>/dev/null | jq -r 'if .type == \"in_ear\" then \"👂 \" + (.battery | tostring) + \"%\" elif .type == \"over_ear\" then \"🎧 \" + (.battery | tostring) + \"%\" else empty end'",
+    "interval": 30
+}
+```
+
 ### Shell Script
+
+Simple version (works for all types):
 
 ```bash
 #!/bin/bash
 if status=$(podpower 2>/dev/null); then
-    left=$(echo "$status" | jq -r '.left // "?"')
-    right=$(echo "$status" | jq -r '.right // "?"')
+    battery=$(echo "$status" | jq -r '.battery // "?"')
     model=$(echo "$status" | jq -r '.model')
-    echo "$model: L=$left% R=$right%"
+    echo "$model: $battery%"
+else
+    echo "AirPods not found"
+fi
+```
+
+Detailed version (showing all components):
+
+```bash
+#!/bin/bash
+if status=$(podpower 2>/dev/null); then
+    model=$(echo "$status" | jq -r '.model')
+    echo "$model:"
+    echo "$status" | jq -r '.components[] | "  \(.name): \(.battery)%\(if .charging then " (charging)" else "" end)"'
 else
     echo "AirPods not found"
 fi
@@ -134,7 +183,7 @@ fi
 ```bash
 #!/bin/bash
 # ~/.config/i3blocks/airpods
-podpower 2>/dev/null | jq -r 'if .type == "in_ear" then "🎧 L:\(.left)% R:\(.right)%" elif .type == "over_ear" then "🎧 \(.battery)%" else "" end' || echo ""
+podpower 2>/dev/null | jq -r 'if .type == "in_ear" then "👂 \(.battery)%" elif .type == "over_ear" then "🎧 \(.battery)%" else "" end' || echo ""
 ```
 
 ## Troubleshooting

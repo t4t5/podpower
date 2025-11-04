@@ -23,40 +23,28 @@ const MASK_CHARGING_RIGHT: u8 = 0x02;
 const MASK_CHARGING_CASE: u8 = 0x04;
 const BATTERY_DISCONNECTED: u8 = 15;
 
-/// Battery status for in-ear AirPods (standard AirPods and AirPods Pro)
+/// A single component (earbud, case, or headphones) with its battery status
 #[derive(Debug, Serialize, Deserialize)]
-struct InEarStatus {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    left: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    right: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    case: Option<u8>,
-    charging_left: bool,
-    charging_right: bool,
-    charging_case: bool,
-}
-
-/// Battery status for AirPods Max (over-ear headphones)
-#[derive(Debug, Serialize, Deserialize)]
-struct MaxStatus {
+struct Component {
+    name: String,
     battery: u8,
     charging: bool,
 }
 
-/// Main AirPods status with device-specific battery information
+/// Main AirPods status with unified component-based structure
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum AirPodsStatus {
     InEar {
         model: String,
-        #[serde(flatten)]
-        status: InEarStatus,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        battery: Option<u8>,
+        components: Vec<Component>,
     },
     OverEar {
         model: String,
-        #[serde(flatten)]
-        status: MaxStatus,
+        battery: u8,
+        components: Vec<Component>,
     },
 }
 
@@ -124,15 +112,13 @@ async fn scan_for_airpods() -> Result<Option<AirPodsStatus>, Box<dyn std::error:
         for peripheral in peripherals {
             let properties = peripheral.properties().await?;
 
-            if let Some(props) = properties {
-                if let Some(data) = props.manufacturer_data.get(&APPLE_MANUFACTURER_ID) {
-                    if data.len() == AIRPODS_DATA_LENGTH {
-                        if let Some(status) = parse_airpods_data(data) {
-                            adapter.stop_scan().await?;
-                            return Ok(Some(status));
-                        }
-                    }
-                }
+            if let Some(props) = properties
+                && let Some(data) = props.manufacturer_data.get(&APPLE_MANUFACTURER_ID)
+                && data.len() == AIRPODS_DATA_LENGTH
+                && let Some(status) = parse_airpods_data(data)
+            {
+                adapter.stop_scan().await?;
+                return Ok(Some(status));
             }
         }
 
@@ -193,9 +179,16 @@ fn parse_airpods_data(data: &[u8]) -> Option<AirPodsStatus> {
         let battery = battery_level(single_raw)?;
         let charging = (charging_flags & MASK_CHARGING_LEFT) != 0;
 
+        let components = vec![Component {
+            name: "headphones".into(),
+            battery,
+            charging,
+        }];
+
         Some(AirPodsStatus::OverEar {
             model: model.into(),
-            status: MaxStatus { battery, charging },
+            battery,
+            components,
         })
     } else {
         // For dual-pod devices (AirPods, AirPods Pro), extract left and right
@@ -219,16 +212,45 @@ fn parse_airpods_data(data: &[u8]) -> Option<AirPodsStatus> {
         let charging_right = (charging_flags & right_mask) != 0;
         let charging_case = (charging_flags & MASK_CHARGING_CASE) != 0;
 
+        // Build components array (only include connected components)
+        let mut components = Vec::new();
+
+        if let Some(left_battery) = left {
+            components.push(Component {
+                name: "left".into(),
+                battery: left_battery,
+                charging: charging_left,
+            });
+        }
+
+        if let Some(right_battery) = right {
+            components.push(Component {
+                name: "right".into(),
+                battery: right_battery,
+                charging: charging_right,
+            });
+        }
+
+        if let Some(case_battery) = case {
+            components.push(Component {
+                name: "case".into(),
+                battery: case_battery,
+                charging: charging_case,
+            });
+        }
+
+        // Calculate top-level battery: minimum of connected earbuds (ignore case)
+        let battery = match (left, right) {
+            (Some(l), Some(r)) => Some(l.min(r)),
+            (Some(l), None) => Some(l),
+            (None, Some(r)) => Some(r),
+            (None, None) => None,
+        };
+
         Some(AirPodsStatus::InEar {
             model: model.into(),
-            status: InEarStatus {
-                left,
-                right,
-                case,
-                charging_left,
-                charging_right,
-                charging_case,
-            },
+            battery,
+            components,
         })
     }
 }
