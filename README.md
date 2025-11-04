@@ -11,7 +11,7 @@ The Python implementation ([AirStatus](https://github.com/SleepyScribe/AirStatus
 
 This Rust implementation:
 - ✅ Does one thing: outputs battery status
-- ✅ Plain text output (scriptable)
+- ✅ JSON output (composable with jq and other Unix tools)
 - ✅ Single compiled binary (no runtime dependencies)
 - ✅ Fast (~3 second scan time)
 
@@ -68,16 +68,10 @@ ln -sf "$(pwd)/target/release/airpods-status" ~/dotfiles/bin/airpods-status
 ## Usage
 
 ```bash
-# Plain text output (default)
+# JSON output (always)
 $ airpods-status
-AirPods Pro
-Left: 85%
-Right: 90%
-Case: 45%
-
-# JSON output (for scripting)
-$ airpods-status --json
 {
+  "type": "in_ear",
   "model": "AirPods Pro",
   "left": 85,
   "right": 90,
@@ -86,6 +80,14 @@ $ airpods-status --json
   "charging_right": false,
   "charging_case": false
 }
+
+# Pipe through jq for formatted output
+$ airpods-status | jq -r '"\(.model): L=\(.left)% R=\(.right)% Case=\(.case)%"'
+AirPods Pro: L=85% R=90% Case=45%
+
+# Extract specific fields
+$ airpods-status | jq '.left'
+85
 ```
 
 ## Exit Codes
@@ -99,8 +101,7 @@ $ airpods-status --json
 
 ```json
 "custom/airpods": {
-    "exec": "airpods-status --json",
-    "return-type": "json",
+    "exec": "airpods-status 2>/dev/null | jq -r '.left // empty'",
     "interval": 30,
     "format": " {}%"
 }
@@ -110,11 +111,22 @@ $ airpods-status --json
 
 ```bash
 #!/bin/bash
-if battery=$(airpods-status 2>/dev/null); then
-    echo "AirPods connected: $battery"
+if status=$(airpods-status 2>/dev/null); then
+    left=$(echo "$status" | jq -r '.left // "?"')
+    right=$(echo "$status" | jq -r '.right // "?"')
+    model=$(echo "$status" | jq -r '.model')
+    echo "$model: L=$left% R=$right%"
 else
     echo "AirPods not found"
 fi
+```
+
+### i3status/i3blocks
+
+```bash
+#!/bin/bash
+# ~/.config/i3blocks/airpods
+airpods-status 2>/dev/null | jq -r 'if .type == "in_ear" then "🎧 \(.left)%" else "🎧 \(.battery)%" end' || echo ""
 ```
 
 ## Troubleshooting

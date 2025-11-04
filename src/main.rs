@@ -1,7 +1,6 @@
 use btleplug::api::{Central, Manager as _, Peripheral as _, ScanFilter};
 use btleplug::platform::Manager;
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -63,32 +62,18 @@ enum AirPodsStatus {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = env::args().collect();
-    let json_output = args.len() > 1 && args[1] == "--json";
-
     match scan_for_airpods().await {
         Ok(Some(status)) => {
-            if json_output {
-                println!("{}", serde_json::to_string_pretty(&status)?);
-            } else {
-                print_plain_text(&status);
-            }
+            println!("{}", serde_json::to_string_pretty(&status)?);
             Ok(())
         }
         Ok(None) => {
-            if json_output {
-                println!("{{\"error\": \"AirPods not found\"}}");
-            } else {
-                eprintln!("AirPods not found");
-            }
+            eprintln!("{{\"error\": \"AirPods not found\"}}");
             std::process::exit(1);
         }
         Err(e) => {
-            if json_output {
-                println!("{{\"error\": \"{}\"}}", e);
-            } else {
-                eprintln!("Error: {}", e);
-            }
+            let error_json = serde_json::json!({"error": e.to_string()});
+            eprintln!("{}", serde_json::to_string(&error_json)?);
             std::process::exit(1);
         }
     }
@@ -263,29 +248,5 @@ fn battery_level(raw: u8) -> Option<u8> {
         0..=9 => Some(raw * 10 + 5),
         BATTERY_DISCONNECTED => None,
         _ => None,
-    }
-}
-
-fn print_plain_text(status: &AirPodsStatus) {
-    match status {
-        AirPodsStatus::Max { model, status } => {
-            println!("{}", model);
-            let charging_suffix = if status.charging { " (charging)" } else { "" };
-            println!("Battery: {}%{}", status.battery, charging_suffix);
-        }
-        AirPodsStatus::InEar { model, status } => {
-            println!("{}", model);
-            print_component("Left", status.left, status.charging_left);
-            print_component("Right", status.right, status.charging_right);
-            print_component("Case", status.case, status.charging_case);
-        }
-    }
-}
-
-/// Print a single component's battery status
-fn print_component(name: &str, battery: Option<u8>, charging: bool) {
-    if let Some(level) = battery {
-        let charging_suffix = if charging { " (charging)" } else { "" };
-        println!("{}: {}%{}", name, level, charging_suffix);
     }
 }
