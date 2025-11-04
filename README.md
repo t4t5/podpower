@@ -12,7 +12,7 @@ This Rust implementation:
 - ✅ Does one thing: outputs battery status
 - ✅ JSON output (composable with jq and other Unix tools)
 - ✅ Single compiled binary (no runtime dependencies)
-- ✅ Fast (~3 second scan time)
+- ✅ Fast (<3 second scan time)
 
 ## How It Works
 
