@@ -58,7 +58,7 @@ AirPods don't maintain a persistent BLE connection when idle - they just broadca
 
 ## Installation
 
-This will add the "podpower" binary to `~/.cargo/bin/podpower`:
+After cloning the repo, run the following command (this will create the "podpower" binary in `~/.cargo/bin/podpower`):
 
 ```bash
 cargo install --path .
