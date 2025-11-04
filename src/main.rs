@@ -95,16 +95,14 @@ async fn scan_for_airpods() -> Result<Option<AirPodsStatus>, Box<dyn std::error:
     let manager = Manager::new().await?;
     let adapters = manager.adapters().await?;
 
-    if adapters.is_empty() {
-        return Err("No Bluetooth adapters found".into());
-    }
+    let adapter = adapters
+        .into_iter()
+        .next()
+        .ok_or("No Bluetooth adapters found")?;
 
-    let adapter = adapters.into_iter().next().unwrap();
-
-    // Start scanning
     adapter.start_scan(ScanFilter::default()).await?;
 
-    // Give the scan a moment to start capturing broadcasts
+    // Wait for scan to start
     sleep(Duration::from_millis(200)).await;
 
     // Poll for AirPods up to SCAN_TIMEOUT_SECS seconds
@@ -112,23 +110,14 @@ async fn scan_for_airpods() -> Result<Option<AirPodsStatus>, Box<dyn std::error:
     let timeout = Duration::from_secs(SCAN_TIMEOUT_SECS);
     let poll_interval = Duration::from_millis(POLL_INTERVAL_MS);
 
-    loop {
-        // Check if we've exceeded the timeout
-        if start.elapsed() >= timeout {
-            adapter.stop_scan().await?;
-            return Ok(None);
-        }
-
-        // Get all discovered peripherals so far
+    while start.elapsed() < timeout {
         let peripherals = adapter.peripherals().await?;
 
-        // Look for AirPods in the discovered devices
         for peripheral in peripherals {
             let properties = peripheral.properties().await?;
 
             if let Some(props) = properties {
-                let manufacturer_data = props.manufacturer_data;
-                if let Some(data) = manufacturer_data.get(&APPLE_MANUFACTURER_ID) {
+                if let Some(data) = props.manufacturer_data.get(&APPLE_MANUFACTURER_ID) {
                     if data.len() == AIRPODS_DATA_LENGTH {
                         if let Some(status) = parse_airpods_data(data) {
                             adapter.stop_scan().await?;
@@ -139,9 +128,11 @@ async fn scan_for_airpods() -> Result<Option<AirPodsStatus>, Box<dyn std::error:
             }
         }
 
-        // Wait before checking again
         sleep(poll_interval).await;
     }
+
+    adapter.stop_scan().await?;
+    Ok(None)
 }
 
 /// Parse AirPods manufacturer data from BLE advertisement
@@ -177,25 +168,23 @@ fn parse_airpods_data(data: &[u8]) -> Option<AirPodsStatus> {
         _ => "AirPods",
     };
 
-    // Check if this is a single-battery device (i.e. AirPods Max)
-    let is_max_device = model_byte == 0x0A; // AirPods Max
+    // Check if this is a single-battery device (AirPods Max)
+    let is_max_device = model_byte == 0x0A;
 
-    // Extract battery levels from byte 6
     let battery_byte = data[BYTE_BATTERY_PODS];
 
-    // Extract case battery and charging status from byte 7
     let case_charge_byte = data[BYTE_BATTERY_CASE_AND_CHARGING];
-    let case_raw = low_nibble(case_charge_byte);
-    let charging_status = high_nibble(case_charge_byte);
+    let case_battery_raw = low_nibble(case_charge_byte);
+    let charging_flags = high_nibble(case_charge_byte);
 
     if is_max_device {
         // For single-battery devices (AirPods Max), use low nibble of byte 6
         let single_raw = low_nibble(battery_byte);
         let battery = battery_level(single_raw)?;
-        let charging = (charging_status & MASK_CHARGING_LEFT) != 0;
+        let charging = (charging_flags & MASK_CHARGING_LEFT) != 0;
 
         Some(AirPodsStatus::Max {
-            model: model.to_string(),
+            model: model.into(),
             status: MaxStatus { battery, charging },
         })
     } else {
@@ -208,23 +197,20 @@ fn parse_airpods_data(data: &[u8]) -> Option<AirPodsStatus> {
 
         let left = battery_level(left_raw);
         let right = battery_level(right_raw);
-        let case = battery_level(case_raw);
+        let case = battery_level(case_battery_raw);
 
         // Parse charging flags (respecting flip bit)
-        let charging_left = if flip {
-            (charging_status & MASK_CHARGING_RIGHT) != 0
+        let (left_mask, right_mask) = if flip {
+            (MASK_CHARGING_RIGHT, MASK_CHARGING_LEFT)
         } else {
-            (charging_status & MASK_CHARGING_LEFT) != 0
+            (MASK_CHARGING_LEFT, MASK_CHARGING_RIGHT)
         };
-        let charging_right = if flip {
-            (charging_status & MASK_CHARGING_LEFT) != 0
-        } else {
-            (charging_status & MASK_CHARGING_RIGHT) != 0
-        };
-        let charging_case = (charging_status & MASK_CHARGING_CASE) != 0;
+        let charging_left = (charging_flags & left_mask) != 0;
+        let charging_right = (charging_flags & right_mask) != 0;
+        let charging_case = (charging_flags & MASK_CHARGING_CASE) != 0;
 
         Some(AirPodsStatus::InEar {
-            model: model.to_string(),
+            model: model.into(),
             status: InEarStatus {
                 left,
                 right,
