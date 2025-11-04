@@ -100,7 +100,13 @@ async fn scan_for_airpods() -> Result<Option<AirPodsStatus>, Box<dyn std::error:
         .next()
         .ok_or("No Bluetooth adapters found")?;
 
-    adapter.start_scan(ScanFilter::default()).await?;
+    // Start scan, providing helpful error message if already in progress
+    if let Err(e) = adapter.start_scan(ScanFilter::default()).await {
+        if e.to_string().contains("already in progress") {
+            return Err("Bluetooth scan already in progress. Try: sudo systemctl restart bluetooth".into());
+        }
+        return Err(e.into());
+    }
 
     // Wait for scan to start
     sleep(Duration::from_millis(200)).await;
