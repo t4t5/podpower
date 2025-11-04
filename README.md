@@ -4,9 +4,9 @@ A simple, Unix-philosophy command-line tool to check AirPods battery status on L
 
 ## Why This Exists
 
-The Python implementation ([AirStatus](https://github.com/SleepyScribe/AirStatus)) works pretty well but:
-- Requires Python runtime + dependencies (bleak)
-- Does more than one thing (continuous monitoring, fancy UI, file logging)
+There are projects similar to this, notably different Python implementations called AirStatus ([windows original](https://github.com/faglo/AirStatus), [linux fork 1](https://github.com/delphiki/AirStatus), [linux fork 2](https://github.com/SleepyScribe/AirStatus)). They work pretty well but:
+- Require Python runtime + dependencies
+- Do more than one thing (continuous monitoring, fancy UI, file logging)
 
 This Rust implementation:
 - ✅ Does one thing: outputs battery status
