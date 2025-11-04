@@ -30,7 +30,7 @@ AirPods broadcast their battery information via Bluetooth Low Energy (BLE) adver
      - `0x1420`/`0x2420` = AirPods Pro 2
      - `0x2720` = AirPods Pro 3
      - `0x0A20`/`0x1F20` = AirPods Max
-   - Byte 5: Flip flag (bit 0x02 determines left/right orientation)
+   - Byte 5: Flip flag (bit 5 at 0x20 determines left/right orientation)
    - Byte 6: Left and right earbud battery (nibble encoded, may be flipped)
    - Byte 7: Case battery (low nibble) + Charging status flags (high nibble)
 

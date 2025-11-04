@@ -17,7 +17,7 @@ const BYTE_BATTERY_PODS: usize = 6;
 const BYTE_BATTERY_CASE_AND_CHARGING: usize = 7;
 
 // Bit masks
-const MASK_FLIP_BIT: u8 = 0x02;
+const MASK_FLIP_BIT: u8 = 0x20;  // Bit 5
 const MASK_CHARGING_LEFT: u8 = 0x01;
 const MASK_CHARGING_RIGHT: u8 = 0x02;
 const MASK_CHARGING_CASE: u8 = 0x04;
@@ -193,9 +193,9 @@ fn parse_airpods_data(data: &[u8]) -> Option<AirPodsStatus> {
     } else {
         // For dual-pod devices (AirPods, AirPods Pro), extract left and right
         let (left_raw, right_raw) = if flip {
-            (low_nibble(battery_byte), high_nibble(battery_byte))
-        } else {
             (high_nibble(battery_byte), low_nibble(battery_byte))
+        } else {
+            (low_nibble(battery_byte), high_nibble(battery_byte))
         };
 
         let left = battery_level(left_raw);
@@ -204,9 +204,9 @@ fn parse_airpods_data(data: &[u8]) -> Option<AirPodsStatus> {
 
         // Parse charging flags (respecting flip bit)
         let (left_mask, right_mask) = if flip {
-            (MASK_CHARGING_RIGHT, MASK_CHARGING_LEFT)
-        } else {
             (MASK_CHARGING_LEFT, MASK_CHARGING_RIGHT)
+        } else {
+            (MASK_CHARGING_RIGHT, MASK_CHARGING_LEFT)
         };
         let charging_left = (charging_flags & left_mask) != 0;
         let charging_right = (charging_flags & right_mask) != 0;
