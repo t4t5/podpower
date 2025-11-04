@@ -1,13 +1,12 @@
-# airpods-status
+# podpower
 
 A simple, Unix-philosophy command-line tool to check AirPods battery status on Linux.
 
 ## Why This Exists
 
-The Python implementation ([AirStatus](https://github.com/SleepyScribe/AirStatus)) works great but:
+The Python implementation ([AirStatus](https://github.com/SleepyScribe/AirStatus)) works pretty well but:
 - Requires Python runtime + dependencies (bleak)
 - Does more than one thing (continuous monitoring, fancy UI, file logging)
-- Not following the Unix philosophy of "do one thing well"
 
 This Rust implementation:
 - ✅ Does one thing: outputs battery status
@@ -22,16 +21,18 @@ AirPods broadcast their battery information via Bluetooth Low Energy (BLE) adver
 1. **Manufacturer ID**: `0x004c` (Apple Inc.)
 2. **Data Length**: 27 bytes
 3. **Data Structure**:
-   - Byte 7: Model identifier
-     - `0x0e` = AirPods Pro
-     - `0x03` = AirPods 3
-     - `0x0f` = AirPods 2
-     - `0x02` = AirPods 1
-     - `0x0a` = AirPods Max
-   - Byte 10: Flip flag (determines left/right orientation)
-   - Bytes 12-13: Left and right earbud battery (nibble encoded, may be flipped)
-   - Byte 14: Charging status flags
-   - Byte 15: Case battery (nibble encoded)
+   - Bytes 3-4: Model identifier (2-byte identifier)
+     - `0x0220` = AirPods 1
+     - `0x0F20` = AirPods 2
+     - `0x1320` = AirPods 3
+     - `0x1920` = AirPods 4
+     - `0x0E20` = AirPods Pro
+     - `0x1420`/`0x2420` = AirPods Pro 2
+     - `0x2720` = AirPods Pro 3
+     - `0x0A20`/`0x1F20` = AirPods Max
+   - Byte 5: Flip flag (bit 0x02 determines left/right orientation)
+   - Byte 6: Left and right earbud battery (nibble encoded, may be flipped)
+   - Byte 7: Case battery (low nibble) + Charging status flags (high nibble)
 
 ### Battery Encoding
 
@@ -43,10 +44,11 @@ The battery level is stored as a single hex digit (0-F):
 ### Why Scanning Is Needed
 
 AirPods don't maintain a persistent BLE connection when idle - they just broadcast advertising packets periodically. This tool:
-1. Scans for BLE devices for 3 seconds
-2. Filters for Apple manufacturer data
-3. Parses the 27-byte packet
-4. Outputs the battery information
+1. Scans for BLE devices for up to 3 seconds (polling every 100ms)
+2. Filters for Apple manufacturer data (ID `0x004c`)
+3. Validates the 27-byte packet length
+4. Parses the packet and outputs the battery information
+5. Stops scanning as soon as AirPods are found
 
 ## Requirements
 
@@ -58,18 +60,15 @@ AirPods don't maintain a persistent BLE connection when idle - they just broadca
 
 ```bash
 # Build release binary
-cd airpods-status-rs
+cd podpower
 cargo build --release
-
-# Install to your local bin
-ln -sf "$(pwd)/target/release/airpods-status" ~/dotfiles/bin/airpods-status
 ```
 
 ## Usage
 
 ```bash
-# JSON output (always)
-$ airpods-status
+# JSON output for in-ear AirPods (standard models and Pro)
+$ podpower
 {
   "type": "in_ear",
   "model": "AirPods Pro",
@@ -81,12 +80,21 @@ $ airpods-status
   "charging_case": false
 }
 
+# JSON output for AirPods Max (over-ear headphones)
+$ podpower
+{
+  "type": "over_ear",
+  "model": "AirPods Max",
+  "battery": 95,
+  "charging": false
+}
+
 # Pipe through jq for formatted output
-$ airpods-status | jq -r '"\(.model): L=\(.left)% R=\(.right)% Case=\(.case)%"'
+$ podpower | jq -r '"\(.model): L=\(.left)% R=\(.right)% Case=\(.case)%"'
 AirPods Pro: L=85% R=90% Case=45%
 
 # Extract specific fields
-$ airpods-status | jq '.left'
+$ podpower | jq '.left'
 85
 ```
 
@@ -101,7 +109,7 @@ $ airpods-status | jq '.left'
 
 ```json
 "custom/airpods": {
-    "exec": "airpods-status 2>/dev/null | jq -r '.left // empty'",
+    "exec": "podpower 2>/dev/null | jq -r '.left // empty'",
     "interval": 30,
     "format": " {}%"
 }
@@ -111,7 +119,7 @@ $ airpods-status | jq '.left'
 
 ```bash
 #!/bin/bash
-if status=$(airpods-status 2>/dev/null); then
+if status=$(podpower 2>/dev/null); then
     left=$(echo "$status" | jq -r '.left // "?"')
     right=$(echo "$status" | jq -r '.right // "?"')
     model=$(echo "$status" | jq -r '.model')
@@ -126,7 +134,7 @@ fi
 ```bash
 #!/bin/bash
 # ~/.config/i3blocks/airpods
-airpods-status 2>/dev/null | jq -r 'if .type == "in_ear" then "🎧 \(.left)%" else "🎧 \(.battery)%" end' || echo ""
+podpower 2>/dev/null | jq -r 'if .type == "in_ear" then "🎧 L:\(.left)% R:\(.right)%" elif .type == "over_ear" then "🎧 \(.battery)%" else "" end' || echo ""
 ```
 
 ## Troubleshooting
@@ -144,7 +152,14 @@ sudo usermod -aG bluetooth $USER
 
 - Make sure AirPods are out of the case or the case is open
 - Ensure they're in range and Bluetooth is enabled
-- Try increasing `SCAN_DURATION_SECS` in `src/main.rs` if the scan is too short
+- Try increasing `SCAN_TIMEOUT_SECS` in `src/main.rs` if the scan is too short (default is 3 seconds)
+
+### Bluetooth Scan Already in Progress
+
+If you see an error about "Bluetooth scan already in progress":
+```bash
+sudo systemctl restart bluetooth
+```
 
 ### No Bluetooth Adapter
 
@@ -160,6 +175,7 @@ bluetoothctl list
 
 Inspired by:
 - [AirStatus](https://github.com/SleepyScribe/AirStatus) - Python implementation
+- [cApod](https://github.com/d4rken-org/capod) - Android implementation with detailed model identifiers
 - Various reverse engineering efforts of Apple's BLE protocol
 
 ## License
