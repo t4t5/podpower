@@ -53,7 +53,7 @@ enum AirPodsStatus {
         #[serde(flatten)]
         status: InEarStatus,
     },
-    Max {
+    OverEar {
         model: String,
         #[serde(flatten)]
         status: MaxStatus,
@@ -183,7 +183,7 @@ fn parse_airpods_data(data: &[u8]) -> Option<AirPodsStatus> {
         let battery = battery_level(single_raw)?;
         let charging = (charging_flags & MASK_CHARGING_LEFT) != 0;
 
-        Some(AirPodsStatus::Max {
+        Some(AirPodsStatus::OverEar {
             model: model.into(),
             status: MaxStatus { battery, charging },
         })
