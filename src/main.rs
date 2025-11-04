@@ -27,12 +27,18 @@ const BATTERY_DISCONNECTED: u8 = 15;
 #[derive(Debug, Serialize, Deserialize)]
 struct AirPodsStatus {
     model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     left: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     right: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     case: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    single: Option<u8>,
     charging_left: bool,
     charging_right: bool,
     charging_case: bool,
+    charging_single: bool,
 }
 
 #[tokio::main]
@@ -166,44 +172,74 @@ fn parse_airpods_data(data: &[u8]) -> Option<AirPodsStatus> {
         _ => "AirPods",
     };
 
-    // Extract battery levels from byte 6 (left and right pods)
+    // Check if this is a single-battery device (AirPods Max, Beats, etc.)
+    let is_single_device = model_byte == 0x0A // AirPods Max
+        || model_byte == 0x0B // Powerbeats Pro (uses dual pods though)
+        || matches!(model_full, 0x0520 | 0x1020 | 0x0620 | 0x0320) // BeatsX, BeatsFlex, BeatsSolo3, Powerbeats3
+        || (model_full >> 8) == 0x09; // BeatsStudio3
+
+    // Extract battery levels from byte 6
     let battery_byte = data[BYTE_BATTERY_PODS];
-    let (left_raw, right_raw) = if flip {
-        (low_nibble(battery_byte), high_nibble(battery_byte))
-    } else {
-        (high_nibble(battery_byte), low_nibble(battery_byte))
-    };
 
     // Extract case battery and charging status from byte 7
     let case_charge_byte = data[BYTE_BATTERY_CASE_AND_CHARGING];
     let case_raw = low_nibble(case_charge_byte);
     let charging_status = high_nibble(case_charge_byte);
 
-    let left = battery_level(left_raw);
-    let right = battery_level(right_raw);
-    let case = battery_level(case_raw);
+    let (left, right, single, charging_left, charging_right, charging_single) = if is_single_device {
+        // For single-battery devices, use low nibble of byte 6 (character 13)
+        let single_raw = low_nibble(battery_byte);
+        let single = battery_level(single_raw);
+        let charging_single = (charging_status & MASK_CHARGING_LEFT) != 0;
+        (None, None, single, false, false, charging_single)
+    } else {
+        // For dual-pod devices, extract left and right
+        let (left_raw, right_raw) = if flip {
+            (low_nibble(battery_byte), high_nibble(battery_byte))
+        } else {
+            (high_nibble(battery_byte), low_nibble(battery_byte))
+        };
 
-    // Parse charging flags (respecting flip bit)
-    let charging_left = if flip {
-        (charging_status & MASK_CHARGING_RIGHT) != 0
-    } else {
-        (charging_status & MASK_CHARGING_LEFT) != 0
+        let left = battery_level(left_raw);
+        let right = battery_level(right_raw);
+
+        // Parse charging flags (respecting flip bit)
+        let charging_left = if flip {
+            (charging_status & MASK_CHARGING_RIGHT) != 0
+        } else {
+            (charging_status & MASK_CHARGING_LEFT) != 0
+        };
+        let charging_right = if flip {
+            (charging_status & MASK_CHARGING_LEFT) != 0
+        } else {
+            (charging_status & MASK_CHARGING_RIGHT) != 0
+        };
+
+        (left, right, None, charging_left, charging_right, false)
     };
-    let charging_right = if flip {
-        (charging_status & MASK_CHARGING_LEFT) != 0
+
+    // Case only exists for AirPods with charging cases (not Max or most Beats)
+    let case = if is_single_device {
+        None
     } else {
-        (charging_status & MASK_CHARGING_RIGHT) != 0
+        battery_level(case_raw)
     };
-    let charging_case = (charging_status & MASK_CHARGING_CASE) != 0;
+    let charging_case = if is_single_device {
+        false
+    } else {
+        (charging_status & MASK_CHARGING_CASE) != 0
+    };
 
     Some(AirPodsStatus {
         model: model.to_string(),
         left,
         right,
         case,
+        single,
         charging_left,
         charging_right,
         charging_case,
+        charging_single,
     })
 }
 
@@ -221,9 +257,14 @@ fn battery_level(raw: u8) -> Option<u8> {
 fn print_plain_text(status: &AirPodsStatus) {
     println!("{}", status.model);
 
-    print_component("Left", status.left, status.charging_left);
-    print_component("Right", status.right, status.charging_right);
-    print_component("Case", status.case, status.charging_case);
+    if let Some(single) = status.single {
+        let charging_suffix = if status.charging_single { " (charging)" } else { "" };
+        println!("Battery: {}%{}", single, charging_suffix);
+    } else {
+        print_component("Left", status.left, status.charging_left);
+        print_component("Right", status.right, status.charging_right);
+        print_component("Case", status.case, status.charging_case);
+    }
 }
 
 /// Print a single component's battery status
