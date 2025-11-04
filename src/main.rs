@@ -177,11 +177,8 @@ fn parse_airpods_data(data: &[u8]) -> Option<AirPodsStatus> {
         _ => "AirPods",
     };
 
-    // Check if this is a single-battery device (AirPods Max, Beats, etc.)
-    let is_single_device = model_byte == 0x0A // AirPods Max
-        || model_byte == 0x0B // Powerbeats Pro (uses dual pods though)
-        || matches!(model_full, 0x0520 | 0x1020 | 0x0620 | 0x0320) // BeatsX, BeatsFlex, BeatsSolo3, Powerbeats3
-        || (model_full >> 8) == 0x09; // BeatsStudio3
+    // Check if this is a single-battery device (i.e. AirPods Max)
+    let is_max_device = model_byte == 0x0A; // AirPods Max
 
     // Extract battery levels from byte 6
     let battery_byte = data[BYTE_BATTERY_PODS];
@@ -191,8 +188,8 @@ fn parse_airpods_data(data: &[u8]) -> Option<AirPodsStatus> {
     let case_raw = low_nibble(case_charge_byte);
     let charging_status = high_nibble(case_charge_byte);
 
-    if is_single_device {
-        // For single-battery devices (AirPods Max, Beats), use low nibble of byte 6
+    if is_max_device {
+        // For single-battery devices (AirPods Max), use low nibble of byte 6
         let single_raw = low_nibble(battery_byte);
         let battery = battery_level(single_raw)?;
         let charging = (charging_status & MASK_CHARGING_LEFT) != 0;
