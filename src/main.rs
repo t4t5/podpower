@@ -56,12 +56,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Ok(None) => {
-            eprintln!("{{\"error\": \"AirPods not found\"}}");
+            eprintln!("AirPods not found");
             std::process::exit(1);
         }
         Err(e) => {
-            let error_json = serde_json::json!({"error": e.to_string()});
-            eprintln!("{}", serde_json::to_string(&error_json)?);
+            eprintln!("Error: {}", e);
             std::process::exit(1);
         }
     }

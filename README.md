@@ -135,7 +135,7 @@ AirPods Pro: L=85% R=90% Case=45%
 
 ```json
 "custom/airpods": {
-    "exec": "podpower 2>/dev/null | jq -r '.battery // empty'",
+    "exec": "podpower | jq -r '.battery // empty'",
     "interval": 30,
     "format": " {}%"
 }
@@ -145,7 +145,7 @@ Or with different icons based on type:
 
 ```json
 "custom/airpods": {
-    "exec": "podpower 2>/dev/null | jq -r 'if .type == \"in_ear\" then \"👂 \" + (.battery | tostring) + \"%\" elif .type == \"over_ear\" then \"🎧 \" + (.battery | tostring) + \"%\" else empty end'",
+    "exec": "podpower | jq -r 'if .type == \"in_ear\" then \"👂 \" + (.battery | tostring) + \"%\" elif .type == \"over_ear\" then \"🎧 \" + (.battery | tostring) + \"%\" else empty end'",
     "interval": 30
 }
 ```
@@ -156,7 +156,7 @@ Simple version (works for all types):
 
 ```bash
 #!/bin/bash
-if status=$(podpower 2>/dev/null); then
+if status=$(podpower); then
     battery=$(echo "$status" | jq -r '.battery // "?"')
     model=$(echo "$status" | jq -r '.model')
     echo "$model: $battery%"
@@ -169,7 +169,7 @@ Detailed version (showing all components):
 
 ```bash
 #!/bin/bash
-if status=$(podpower 2>/dev/null); then
+if status=$(podpower); then
     model=$(echo "$status" | jq -r '.model')
     echo "$model:"
     echo "$status" | jq -r '.components[] | "  \(.name): \(.battery)%\(if .charging then " (charging)" else "" end)"'
@@ -183,7 +183,7 @@ fi
 ```bash
 #!/bin/bash
 # ~/.config/i3blocks/airpods
-podpower 2>/dev/null | jq -r 'if .type == "in_ear" then "👂 \(.battery)%" elif .type == "over_ear" then "🎧 \(.battery)%" else "" end' || echo ""
+podpower | jq -r 'if .type == "in_ear" then "👂 \(.battery)%" elif .type == "over_ear" then "🎧 \(.battery)%" else "" end' || echo ""
 ```
 
 ## Troubleshooting
