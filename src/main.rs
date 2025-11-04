@@ -7,7 +7,22 @@ use tokio::time::sleep;
 
 const APPLE_MANUFACTURER_ID: u16 = 0x004c; // Apple Inc.
 const AIRPODS_DATA_LENGTH: usize = 27;
-const SCAN_DURATION_SECS: u64 = 3;
+const SCAN_TIMEOUT_SECS: u64 = 3;
+const POLL_INTERVAL_MS: u64 = 100; // Check for new devices every 100ms
+
+// Byte positions in the 27-byte manufacturer data
+const BYTE_MODEL_HIGH: usize = 3;
+const BYTE_MODEL_LOW: usize = 4;
+const BYTE_FLIP: usize = 5;
+const BYTE_BATTERY_PODS: usize = 6;
+const BYTE_BATTERY_CASE_AND_CHARGING: usize = 7;
+
+// Bit masks
+const MASK_FLIP_BIT: u8 = 0x02;
+const MASK_CHARGING_LEFT: u8 = 0x01;
+const MASK_CHARGING_RIGHT: u8 = 0x02;
+const MASK_CHARGING_CASE: u8 = 0x04;
+const BATTERY_DISCONNECTED: u8 = 15;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct AirPodsStatus {
@@ -53,6 +68,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+/// Extract the high nibble (4 bits) from a byte
+#[inline]
+fn high_nibble(byte: u8) -> u8 {
+    (byte >> 4) & 0x0f
+}
+
+/// Extract the low nibble (4 bits) from a byte
+#[inline]
+fn low_nibble(byte: u8) -> u8 {
+    byte & 0x0f
+}
+
 async fn scan_for_airpods() -> Result<Option<AirPodsStatus>, Box<dyn std::error::Error>> {
     let manager = Manager::new().await?;
     let adapters = manager.adapters().await?;
@@ -64,50 +91,69 @@ async fn scan_for_airpods() -> Result<Option<AirPodsStatus>, Box<dyn std::error:
     let adapter = adapters.into_iter().next().unwrap();
 
     // Start scanning
-    adapter
-        .start_scan(ScanFilter::default())
-        .await?;
+    adapter.start_scan(ScanFilter::default()).await?;
 
-    // Scan for specified duration
-    sleep(Duration::from_secs(SCAN_DURATION_SECS)).await;
+    // Give the scan a moment to start capturing broadcasts
+    sleep(Duration::from_millis(200)).await;
 
-    // Get all discovered peripherals
-    let peripherals = adapter.peripherals().await?;
+    // Poll for AirPods up to SCAN_TIMEOUT_SECS seconds
+    let start = std::time::Instant::now();
+    let timeout = Duration::from_secs(SCAN_TIMEOUT_SECS);
+    let poll_interval = Duration::from_millis(POLL_INTERVAL_MS);
 
-    // Look for AirPods in the discovered devices
-    for peripheral in peripherals {
-        let properties = peripheral.properties().await?;
+    loop {
+        // Check if we've exceeded the timeout
+        if start.elapsed() >= timeout {
+            adapter.stop_scan().await?;
+            return Ok(None);
+        }
 
-        if let Some(props) = properties {
-            let manufacturer_data = props.manufacturer_data;
-            if let Some(data) = manufacturer_data.get(&APPLE_MANUFACTURER_ID) {
-                if data.len() == AIRPODS_DATA_LENGTH {
-                    if let Some(status) = parse_airpods_data(data) {
-                        adapter.stop_scan().await?;
-                        return Ok(Some(status));
+        // Get all discovered peripherals so far
+        let peripherals = adapter.peripherals().await?;
+
+        // Look for AirPods in the discovered devices
+        for peripheral in peripherals {
+            let properties = peripheral.properties().await?;
+
+            if let Some(props) = properties {
+                let manufacturer_data = props.manufacturer_data;
+                if let Some(data) = manufacturer_data.get(&APPLE_MANUFACTURER_ID) {
+                    if data.len() == AIRPODS_DATA_LENGTH {
+                        if let Some(status) = parse_airpods_data(data) {
+                            adapter.stop_scan().await?;
+                            return Ok(Some(status));
+                        }
                     }
                 }
             }
         }
-    }
 
-    adapter.stop_scan().await?;
-    Ok(None)
+        // Wait before checking again
+        sleep(poll_interval).await;
+    }
 }
 
+/// Parse AirPods manufacturer data from BLE advertisement
+///
+/// # BLE Packet Structure (27 bytes)
+/// Based on reverse engineering from OpenPods project:
+/// - Byte 3-4: Device model identifier
+/// - Byte 5: Flip bit (determines left/right orientation)
+/// - Byte 6: Left and right pod battery levels (4 bits each)
+/// - Byte 7: Case battery + charging status
+///   - High nibble (bits 4-7): Charging flags
+///   - Low nibble (bits 0-3): Case battery level
 fn parse_airpods_data(data: &[u8]) -> Option<AirPodsStatus> {
     if data.len() != AIRPODS_DATA_LENGTH {
         return None;
     }
 
-    // Check if data is flipped (bit 1 of byte 5 - hex char 10)
-    // OpenPods: isFlipped checks character 10, which is the high nibble of byte 5
-    let flip = (data[5] & 0x02) == 0;
+    // Check if left/right are flipped
+    let flip = (data[BYTE_FLIP] & MASK_FLIP_BIT) == 0;
 
-    // Detect model from byte 3 (hex chars 6-7)
-    // OpenPods checks character 7, which is the low nibble of byte 3
-    let model_byte = data[3] & 0x0f;
-    let model_full = ((data[3] as u16) << 8) | (data[4] as u16);
+    // Detect model from 2-byte identifier
+    let model_byte = low_nibble(data[BYTE_MODEL_HIGH]);
+    let model_full = ((data[BYTE_MODEL_HIGH] as u16) << 8) | (data[BYTE_MODEL_LOW] as u16);
 
     let model = match model_full {
         0x0220 => "AirPods 1",
@@ -120,40 +166,35 @@ fn parse_airpods_data(data: &[u8]) -> Option<AirPodsStatus> {
         _ => "AirPods",
     };
 
-    // Battery levels are in byte 6 (hex chars 12-13)
-    // Char 12 is high nibble, char 13 is low nibble
-    let left_raw = if flip {
-        data[6] & 0x0f  // Low nibble (char 13)
+    // Extract battery levels from byte 6 (left and right pods)
+    let battery_byte = data[BYTE_BATTERY_PODS];
+    let (left_raw, right_raw) = if flip {
+        (low_nibble(battery_byte), high_nibble(battery_byte))
     } else {
-        (data[6] >> 4) & 0x0f  // High nibble (char 12)
-    };
-    let right_raw = if flip {
-        (data[6] >> 4) & 0x0f  // High nibble (char 12)
-    } else {
-        data[6] & 0x0f  // Low nibble (char 13)
+        (high_nibble(battery_byte), low_nibble(battery_byte))
     };
 
-    // Case battery is in byte 7 (hex chars 14-15)
-    // Char 15 is the low nibble
-    let case_raw = data[7] & 0x0f;
+    // Extract case battery and charging status from byte 7
+    let case_charge_byte = data[BYTE_BATTERY_CASE_AND_CHARGING];
+    let case_raw = low_nibble(case_charge_byte);
+    let charging_status = high_nibble(case_charge_byte);
 
-    let left = battery_level(left_raw as i8);
-    let right = battery_level(right_raw as i8);
-    let case = battery_level(case_raw as i8);
+    let left = battery_level(left_raw);
+    let right = battery_level(right_raw);
+    let case = battery_level(case_raw);
 
-    // Charging status is in byte 7 (hex char 14 is high nibble)
-    let charging_status = (data[7] >> 4) & 0x0f;
+    // Parse charging flags (respecting flip bit)
     let charging_left = if flip {
-        (charging_status & 0x02) != 0
+        (charging_status & MASK_CHARGING_RIGHT) != 0
     } else {
-        (charging_status & 0x01) != 0
+        (charging_status & MASK_CHARGING_LEFT) != 0
     };
     let charging_right = if flip {
-        (charging_status & 0x01) != 0
+        (charging_status & MASK_CHARGING_LEFT) != 0
     } else {
-        (charging_status & 0x02) != 0
+        (charging_status & MASK_CHARGING_RIGHT) != 0
     };
-    let charging_case = (charging_status & 0x04) != 0;
+    let charging_case = (charging_status & MASK_CHARGING_CASE) != 0;
 
     Some(AirPodsStatus {
         model: model.to_string(),
@@ -166,10 +207,13 @@ fn parse_airpods_data(data: &[u8]) -> Option<AirPodsStatus> {
     })
 }
 
-fn battery_level(raw: i8) -> Option<u8> {
+/// Convert raw battery value (0-10) to percentage (5-100%)
+/// Returns None if the device is disconnected (value 15)
+fn battery_level(raw: u8) -> Option<u8> {
     match raw {
         10 => Some(100),
-        0..=9 => Some((raw as u8) * 10 + 5),
+        0..=9 => Some(raw * 10 + 5),
+        BATTERY_DISCONNECTED => None,
         _ => None,
     }
 }
@@ -177,27 +221,15 @@ fn battery_level(raw: i8) -> Option<u8> {
 fn print_plain_text(status: &AirPodsStatus) {
     println!("{}", status.model);
 
-    if let Some(left) = status.left {
-        print!("Left: {}%", left);
-        if status.charging_left {
-            print!(" (charging)");
-        }
-        println!();
-    }
+    print_component("Left", status.left, status.charging_left);
+    print_component("Right", status.right, status.charging_right);
+    print_component("Case", status.case, status.charging_case);
+}
 
-    if let Some(right) = status.right {
-        print!("Right: {}%", right);
-        if status.charging_right {
-            print!(" (charging)");
-        }
-        println!();
-    }
-
-    if let Some(case) = status.case {
-        print!("Case: {}%", case);
-        if status.charging_case {
-            print!(" (charging)");
-        }
-        println!();
+/// Print a single component's battery status
+fn print_component(name: &str, battery: Option<u8>, charging: bool) {
+    if let Some(level) = battery {
+        let charging_suffix = if charging { " (charging)" } else { "" };
+        println!("{}: {}%{}", name, level, charging_suffix);
     }
 }
