@@ -97,9 +97,6 @@ async fn scan_for_airpods() -> Result<Option<AirPodsStatus>, Box<dyn std::error:
         return Err(e.into());
     }
 
-    // Wait for scan to start
-    sleep(Duration::from_millis(200)).await;
-
     // Poll for AirPods up to SCAN_TIMEOUT_SECS seconds
     let start = std::time::Instant::now();
     let timeout = Duration::from_secs(SCAN_TIMEOUT_SECS);
