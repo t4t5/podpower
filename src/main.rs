@@ -100,32 +100,49 @@ fn parse_airpods_data(data: &[u8]) -> Option<AirPodsStatus> {
         return None;
     }
 
-    // Check if data is flipped (bit 1 of byte 10)
-    let flip = (data[10] & 0x02) == 0;
+    // Check if data is flipped (bit 1 of byte 5 - hex char 10)
+    // OpenPods: isFlipped checks character 10, which is the high nibble of byte 5
+    let flip = (data[5] & 0x02) == 0;
 
-    // Detect model from byte 7
-    let model = match data[7] {
-        0x0e => "AirPods Pro",
-        0x03 => "AirPods 3",
-        0x0f => "AirPods 2",
-        0x02 => "AirPods 1",
-        0x0a => "AirPods Max",
+    // Detect model from byte 3 (hex chars 6-7)
+    // OpenPods checks character 7, which is the low nibble of byte 3
+    let model_byte = data[3] & 0x0f;
+    let model_full = ((data[3] as u16) << 8) | (data[4] as u16);
+
+    let model = match model_full {
+        0x0220 => "AirPods 1",
+        0x0F20 => "AirPods 2",
+        0x1320 => "AirPods 3",
+        0x0E20 => "AirPods Pro",
+        0x1420 | 0x2420 => "AirPods Pro 2",
+        0x2720 => "AirPods Pro 3",
+        _ if model_byte == 0x0A => "AirPods Max",
         _ => "AirPods",
     };
 
-    // Parse battery levels (accounting for flip)
-    let (left_pos, right_pos) = if flip { (13, 12) } else { (12, 13) };
+    // Battery levels are in byte 6 (hex chars 12-13)
+    // Char 12 is high nibble, char 13 is low nibble
+    let left_raw = if flip {
+        data[6] & 0x0f  // Low nibble (char 13)
+    } else {
+        (data[6] >> 4) & 0x0f  // High nibble (char 12)
+    };
+    let right_raw = if flip {
+        (data[6] >> 4) & 0x0f  // High nibble (char 12)
+    } else {
+        data[6] & 0x0f  // Low nibble (char 13)
+    };
 
-    let left_raw = (data[left_pos] & 0x0f) as i8;
-    let right_raw = (data[right_pos] & 0x0f) as i8;
-    let case_raw = (data[15] & 0x0f) as i8;
+    // Case battery is in byte 7 (hex chars 14-15)
+    // Char 15 is the low nibble
+    let case_raw = data[7] & 0x0f;
 
-    let left = battery_level(left_raw);
-    let right = battery_level(right_raw);
-    let case = battery_level(case_raw);
+    let left = battery_level(left_raw as i8);
+    let right = battery_level(right_raw as i8);
+    let case = battery_level(case_raw as i8);
 
-    // Parse charging status from byte 14
-    let charging_status = data[14];
+    // Charging status is in byte 7 (hex char 14 is high nibble)
+    let charging_status = (data[7] >> 4) & 0x0f;
     let charging_left = if flip {
         (charging_status & 0x02) != 0
     } else {
