@@ -103,7 +103,9 @@ async fn scan_for_airpods() -> Result<Option<AirPodsStatus>, Box<dyn std::error:
     // Start scan, providing helpful error message if already in progress
     if let Err(e) = adapter.start_scan(ScanFilter::default()).await {
         if e.to_string().contains("already in progress") {
-            return Err("Bluetooth scan already in progress. Try: sudo systemctl restart bluetooth".into());
+            return Err(
+                "Bluetooth scan already in progress. Try: sudo systemctl restart bluetooth".into(),
+            );
         }
         return Err(e.into());
     }
@@ -163,14 +165,16 @@ fn parse_airpods_data(data: &[u8]) -> Option<AirPodsStatus> {
     let model_byte = low_nibble(data[BYTE_MODEL_HIGH]);
     let model_full = ((data[BYTE_MODEL_HIGH] as u16) << 8) | (data[BYTE_MODEL_LOW] as u16);
 
+    // See: https://github.com/d4rken-org/capod/blob/5860bbffb6b2e59feca450bc234595314e842366/app/src/main/java/eu/darken/capod/pods/core/apple/airpods/AirPodsGen4.kt#L78
     let model = match model_full {
         0x0220 => "AirPods 1",
         0x0F20 => "AirPods 2",
         0x1320 => "AirPods 3",
+        0x1920 => "AirPods 4",
         0x0E20 => "AirPods Pro",
         0x1420 | 0x2420 => "AirPods Pro 2",
         0x2720 => "AirPods Pro 3",
-        _ if model_byte == 0x0A => "AirPods Max",
+        0x0A20 | 0x1F20 => "AirPods Max",
         _ => "AirPods",
     };
 

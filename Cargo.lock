@@ -3,16 +3,6 @@
 version = 4
 
 [[package]]
-name = "airpods-status-rs"
-version = "0.1.0"
-dependencies = [
- "btleplug",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -485,6 +475,16 @@ name = "pkg-config"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
+
+[[package]]
+name = "podpower"
+version = "0.1.0"
+dependencies = [
+ "btleplug",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "proc-macro2"

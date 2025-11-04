@@ -1,10 +1,10 @@
 [package]
-name = "airpods-status-rs"
+name = "podpower"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [[bin]]
-name = "airpods-status"
+name = "podpower"
 path = "src/main.rs"
 
 [dependencies]
