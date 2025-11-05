@@ -8,6 +8,7 @@ const APPLE_MANUFACTURER_ID: u16 = 0x004c; // Apple Inc.
 const AIRPODS_DATA_LENGTH: usize = 27;
 const SCAN_TIMEOUT_SECS: u64 = 3;
 const POLL_INTERVAL_MS: u64 = 100; // Check for new devices every 100ms
+const MIN_RSSI_THRESHOLD: i16 = -60; // Only consider devices with RSSI > -60 dBm (strong signal = nearby/connected)
 
 // Byte positions in the 27-byte manufacturer data
 const BYTE_MODEL_HIGH: usize = 3;
@@ -111,10 +112,20 @@ async fn scan_for_airpods() -> Result<Option<AirPodsStatus>, Box<dyn std::error:
             if let Some(props) = properties
                 && let Some(data) = props.manufacturer_data.get(&APPLE_MANUFACTURER_ID)
                 && data.len() == AIRPODS_DATA_LENGTH
-                && let Some(status) = parse_airpods_data(data)
             {
-                adapter.stop_scan().await?;
-                return Ok(Some(status));
+                // Check RSSI - only consider devices with strong signal (likely connected/nearby)
+                // Connected AirPods typically have RSSI between -30 and -60 dBm
+                // Distant/disconnected ones are usually below -70 dBm
+                if let Some(rssi) = props.rssi {
+                    if rssi < MIN_RSSI_THRESHOLD {
+                        continue; // Skip weak signals
+                    }
+                }
+
+                if let Some(status) = parse_airpods_data(data) {
+                    adapter.stop_scan().await?;
+                    return Ok(Some(status));
+                }
             }
         }
 
